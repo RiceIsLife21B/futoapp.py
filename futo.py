@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 st.set_page_config(page_title="Futomaki Studio", layout="wide")
 
-BG = "#000000"
+BG = "#c4c4c4"
 RED = "#ed2227"
 SESAME = "Black + White Sesame Seeds"
 SHISO = "Shiso Leaf"
