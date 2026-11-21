@@ -375,7 +375,7 @@ def reset_roll():
 
 st.markdown("""
 <style>
-.stApp {background:#C6C6C6; color:#29352e;}
+.stApp {background:#000000; color:#29352e;}
 h1,h2,h3 {color:#29352e;}
 /* White controls with red strokes, including the two roll-style bars. */
 div.stButton > button, div.stDownloadButton > button {
