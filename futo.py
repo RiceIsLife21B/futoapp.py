@@ -380,7 +380,7 @@ h1,h2,h3 {color:#29352e;}
 /* White controls with red strokes, including the two roll-style bars. */
 div.stButton > button, div.stDownloadButton > button {
   background:#ffffff !important;
-  border:4px solid #000000 !important;
+  border:2px solid #000000 !important;
   color:000000 !important;
   border-radius:8px !important;
   height:auto !important;
@@ -392,7 +392,7 @@ div.stButton > button, div.stDownloadButton > button {
   text-align:left !important;
   line-height:1.35 !important;
   padding:9px 10px !important;
-  font-weight:650 !important;
+  font-weight:800 !important;
   font-size:13px !important;
 }
 div.stButton > button:hover, div.stDownloadButton > button:hover {
