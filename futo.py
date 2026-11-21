@@ -381,7 +381,7 @@ h1,h2,h3 {color:#29352e;}
 div.stButton > button, div.stDownloadButton > button {
   background:#ffffff !important;
   border:2px solid #ed2227 !important;
-  color:#ed2227 !important;
+  color:000000 !important;
   border-radius:8px !important;
   height:auto !important;
   min-height:43px !important;
