@@ -23,7 +23,7 @@ PROTEINS = sorted([
     "Miso Marinated Tofu", "Hamachi", "Hiramasa", "Shiromi", "Hotate",
     "Hotate Aburi", "Hamachi Aburi", "Ebi", "Ikura", "Uni", "Kani",
     "Salmon", "Salmon Aburi", "Tuna Salad", "Cooked Miso Salmon",
-    "Bulgogi Brisket", "Pork Belly",
+    "Cooked Bulgogi Brisket", "Gochujang Cooked Pork Belly",
     "Spicy Scallop Salad", "Grilled Chicken Breast"
 ], key=str.casefold)
 
