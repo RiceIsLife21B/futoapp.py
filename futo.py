@@ -1,18 +1,22 @@
 
+import hashlib
 import io
 import math
 import random
-import hashlib
 from functools import lru_cache
 
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 st.set_page_config(page_title="Futomaki Studio", layout="wide")
 
-BACKGROUND = "#C6C6C6"
+BG = "#C6C6C6"
+RED = "#ed2227"
 SESAME = "Black + White Sesame Seeds"
 SHISO = "Shiso Leaf"
+SIZE = 1100
+CENTER = SIZE // 2
+ROLL_RADIUS = 448  # Previous radius was 112: now 4x as large.
 
 PROTEINS = sorted([
     "Otoro Aburi", "Otoro", "Chutoro", "Akami", "Tempura Shrimp",
@@ -20,7 +24,7 @@ PROTEINS = sorted([
     "Hotate Aburi", "Hamachi Aburi", "Ebi", "Ikura", "Uni", "Kani",
     "Salmon", "Salmon Aburi", "Tuna Salad", "Cooked Miso Salmon",
     "Cooked Bulgogi Brisket", "Cooked Gochujang Pork Belly",
-    "Spicy Scallop Salad", "Grilled Chicken Breast",
+    "Spicy Scallop Salad", "Grilled Chicken Breast"
 ], key=str.casefold)
 
 FILLINGS = sorted([
@@ -28,36 +32,35 @@ FILLINGS = sorted([
     "Julienne Cucumber", "Yellow Daikon", "Mango Spears", "Asparagus",
     "Tamago", "Shiso Leaf", "Diced Green Onions", "Tempura Bits",
     "Julienned Carrot Spears", "Spinach", "Mayo", "Spicy Mayo", "Kimchi",
-    "Cream Cheese", "Black + White Sesame Seeds",
+    "Cream Cheese", SESAME
 ], key=str.casefold)
 
+# Colors are ingredient-specific rather than shared fish presets.
 COLORS = {
-    "Otoro Aburi": "#dca89c", "Otoro": "#edaca5", "Chutoro": "#d57578",
-    "Akami": "#af384c", "Tempura Shrimp": "#dba663",
-    "Miso Marinated Tofu": "#dec9a0", "Hamachi": "#e8d8bd",
-    "Hamachi Aburi": "#d9bc91", "Hiramasa": "#dce2d6",
-    "Shiromi": "#f0e6df", "Hotate": "#ede1cd",
-    "Hotate Aburi": "#d6b58b", "Ebi": "#eaa090",
-    "Ikura": "#f28028", "Uni": "#eeb04c", "Kani": "#e9e4dc",
-    "Salmon": "#ee987d", "Salmon Aburi": "#d98565",
-    "Tuna Salad": "#d0a89c", "Cooked Miso Salmon": "#c88f6a",
-    "Cooked Bulgogi Brisket": "#835445",
-    "Cooked Gochujang Pork Belly": "#af594b",
-    "Spicy Scallop Salad": "#ecc1a2",
-    "Grilled Chicken Breast": "#dcc4a0",
-    "Pickled Jalapeño Spears": "#67923a", "Avocado": "#a8d166",
-    "Ube Purple Yam": "#9265ab", "Edamame": "#80b951",
-    "Julienne Cucumber": "#a1d177", "Yellow Daikon": "#e7d357",
-    "Mango Spears": "#f6b244", "Asparagus": "#719949",
-    "Tamago": "#edca5a", "Shiso Leaf": "#386d42",
-    "Diced Green Onions": "#5d9b56", "Tempura Bits": "#d6aa6c",
-    "Julienned Carrot Spears": "#e78038", "Spinach": "#437343",
-    "Mayo": "#f6e8c9", "Spicy Mayo": "#e9a17b",
-    "Kimchi": "#bc5537", "Cream Cheese": "#f4eee1",
-    SESAME: "#ebebdc",
+    "Akami": "#bd2447", "Chutoro": "#e66b83", "Otoro": "#f0a3b3",
+    "Otoro Aburi": "#d58b92", "Hamachi": "#eed4ab",
+    "Hamachi Aburi": "#d6b48e", "Hiramasa": "#c9dccd",
+    "Shiromi": "#f4eee7", "Hotate": "#f3e6d0",
+    "Hotate Aburi": "#d9b68e", "Salmon": "#fa8868",
+    "Salmon Aburi": "#e77b58", "Ebi": "#f6e6dc",
+    "Kani": "#fff5e8", "Ikura": "#ed6e18", "Uni": "#eca538",
+    "Tempura Shrimp": "#e5ae60", "Miso Marinated Tofu": "#e3cb9c",
+    "Tuna Salad": "#d3a3a1", "Cooked Miso Salmon": "#c7845f",
+    "Cooked Bulgogi Brisket": "#663b29",
+    "Cooked Gochujang Pork Belly": "#ae301f",
+    "Spicy Scallop Salad": "#e8ae93",
+    "Grilled Chicken Breast": "#d3b48c",
+    "Avocado": "#b0d779", "Edamame": "#81ba4d",
+    "Julienne Cucumber": "#b0d885", "Pickled Jalapeño Spears": "#638d43",
+    "Asparagus": "#709743", "Spinach": "#397044", SHISO: "#2c6840",
+    "Diced Green Onions": "#6aa353", "Ube Purple Yam": "#9565b0",
+    "Yellow Daikon": "#ead45e", "Mango Spears": "#f8b448",
+    "Tamago": "#f1d166", "Julienned Carrot Spears": "#eb7c36",
+    "Tempura Bits": "#cf9a52", "Kimchi": "#c44e2e",
+    "Mayo": "#f7eedc", "Spicy Mayo": "#edaa87",
+    "Cream Cheese": "#f9f6ee", SESAME: "#efe9dc"
 }
 
-# Starting sample: Hamachi, avocado, cucumber, green onions.
 if "ingredients" not in st.session_state:
     st.session_state.ingredients = {
         "Hamachi", "Avocado", "Julienne Cucumber", "Diced Green Onions"
@@ -66,293 +69,403 @@ if "roll_style" not in st.session_state:
     st.session_state.roll_style = "Futomaki"
 
 
-def rng_for(*parts):
-    digest = hashlib.sha256("|".join(map(str, parts)).encode()).digest()
-    return random.Random(int.from_bytes(digest[:8], "big"))
+def rand_for(*parts):
+    data = "|".join(map(str, parts)).encode("utf-8")
+    return random.Random(int.from_bytes(hashlib.sha256(data).digest()[:8], "big"))
 
 
-def ellipse(draw, x, y, rx, ry, color, width=0):
-    box = (round(x-rx), round(y-ry), round(x+rx), round(y+ry))
-    if width:
-        draw.ellipse(box, outline=color, width=width)
-    else:
-        draw.ellipse(box, fill=color)
+def oval(d, x, y, rx, ry, color, outline=None, width=1):
+    bounds = (round(x-rx), round(y-ry), round(x+rx), round(y+ry))
+    d.ellipse(bounds, fill=color, outline=outline, width=width)
 
 
-def spots(draw, rng, size, palette, count=100, small=.015, large=.09):
+def scatter(d, rng, s, palette, count, min_r, max_r, ellipse_ratio=1):
     for _ in range(count):
-        x, y = rng.randrange(size), rng.randrange(size)
-        radius = rng.uniform(small, large) * size
-        ellipse(draw, x, y, radius, radius*rng.uniform(.55, 1.35), rng.choice(palette))
+        x, y = rng.randrange(s), rng.randrange(s)
+        r = rng.uniform(min_r, max_r) * s
+        oval(d, x, y, r, r*ellipse_ratio*rng.uniform(.75, 1.2), rng.choice(palette))
+
+
+def fibers(d, rng, s, palette, count=105, width=3, span=.25, slope=.05):
+    for _ in range(count):
+        x, y = rng.randrange(s), rng.randrange(s)
+        dx = rng.uniform(.04, span)*s
+        dy = rng.uniform(-slope, slope)*s
+        d.line((x-dx,y-dy,x+dx,y+dy), fill=rng.choice(palette), width=width)
+
+
+def scorch(d, rng, s, count=105):
+    for _ in range(count):
+        x,y=rng.randrange(s),rng.randrange(s)
+        rx=rng.uniform(.009,.055)*s
+        oval(d,x,y,rx,rx*.3,rng.choice(["#65351d80","#a464348c","#dca05d8c"]))
 
 
 @lru_cache(maxsize=128)
-def ingredient_texture(name, size=340):
-    """Generated cross-sectional food-like textures. No external image assets."""
-    rng = rng_for(name, size)
-    image = Image.new("RGB", (size, size), COLORS[name])
-    d = ImageDraw.Draw(image, "RGBA")
+def texture(name, s=512):
+    """Distinct, illustrated food textures. These are not photographs."""
+    rng = rand_for("ingredient",name,s)
+    im = Image.new("RGB",(s,s),COLORS[name])
+    d=ImageDraw.Draw(im,"RGBA")
 
-    if name == "Diced Green Onions":
-        # Deliberately large onion tubes: roughly 3× their original diameter.
-        spots(d, rng, size, ["#b3d789", "#5c9c53", "#2c753f"], 90, .016, .055)
-        for _ in range(115):
-            x, y = rng.randrange(size), rng.randrange(size)
-            r = rng.uniform(.027, .057) * size
-            ellipse(d, x, y, r, r, "#327c42")
-            ellipse(d, x, y, r*.74, r*.74, "#e0eabb")
-            ellipse(d, x, y, r*.43, r*.43, "#90c574")
-    elif name in {"Avocado", "Edamame"}:
-        spots(d, rng, size, ["#c7e791", "#80b15a", "#e1edb8", "#6e9e47"], 270, .012, .065)
-    elif name in {"Julienne Cucumber", "Asparagus", "Pickled Jalapeño Spears"}:
-        spots(d, rng, size, ["#4b8b46", "#a8d67e", "#e5f0b8", "#76b065"], 220, .012, .07)
-        spots(d, rng, size, ["#f5f2d5", "#e7efbf"], 130, .004, .014)
-    elif name in {"Spinach", SHISO}:
-        spots(d, rng, size, ["#215b36", "#5e914c", "#86af5c"], 260, .008, .09)
-        for _ in range(125):
-            x, y = rng.randrange(size), rng.randrange(size)
-            d.line((x,y,x+rng.randrange(-25,26),y+rng.randrange(-25,26)), fill="#bbd796", width=2)
+    if name in {"Akami","Chutoro","Otoro","Otoro Aburi"}:
+        if name == "Akami":
+            fibers(d,rng,s,["#e54c6f80","#8e153a80","#f6a3a875"],150,3,.35,.035)
+            scatter(d,rng,s,["#9e183044","#f0657950"],70,.006,.028)
+        elif name == "Chutoro":
+            fibers(d,rng,s,["#fff0d6a9","#f6b5bbaa","#b9375970"],170,5,.38,.05)
+            scatter(d,rng,s,["#fff5e777","#cc415f65"],105,.004,.035)
+        else:
+            # Fat-rich pink belly tuna with broad irregular marbling.
+            fibers(d,rng,s,["#fff5e6db","#fff9f3b8","#d86d8690"],220,8,.43,.10)
+            scatter(d,rng,s,["#fff5e8aa","#ffe7dc9a"],85,.015,.07,.35)
+            if name == "Otoro Aburi": scorch(d,rng,s,180)
+
+    elif name in {"Salmon","Salmon Aburi","Cooked Miso Salmon"}:
+        fibers(d,rng,s,["#fff0cebb","#ffd5ae9c","#e9685577"],185,7,.42,.045)
+        scatter(d,rng,s,["#ffb58480","#da644966"],60,.008,.038)
+        if name != "Salmon": scorch(d,rng,s,175)
+
+    elif name in {"Hamachi","Hamachi Aburi"}:
+        # Warm ivory/gold hamachi, translucent pale striping.
+        fibers(d,rng,s,["#fff6ddaa","#d9ae7b91","#fffef2a0"],140,5,.30,.05)
+        scatter(d,rng,s,["#efd9b07d","#c9af8660"],90,.012,.05)
+        if name.endswith("Aburi"): scorch(d,rng,s,160)
+
+    elif name == "Hiramasa":
+        # Silvery, pale green kingfish with subtle cool, long grain.
+        fibers(d,rng,s,["#edf4e8d4","#8eacac80","#fffef2a6"],195,3,.46,.025)
+        scatter(d,rng,s,["#b2c8c788","#f4f7e8bb"],85,.012,.045)
+
+    elif name == "Shiromi":
+        # Near-white transparent flesh with fine rose-grey lines.
+        fibers(d,rng,s,["#d7c4c3ad","#ffffffcd","#d8d6d0b0"],170,2,.38,.06)
+        scatter(d,rng,s,["#ffffffb5","#ebdeda80"],80,.006,.035)
+
+    elif name in {"Hotate","Hotate Aburi"}:
+        # Scallop: creamy rounded lobes and radial fine fibers.
+        scatter(d,rng,s,["#fff8e8","#dfcbb3","#f1e4d0"],160,.03,.11,.7)
+        fibers(d,rng,s,["#ffffffaa","#c9b49e73"],170,2,.08,.32)
+        if name.endswith("Aburi"): scorch(d,rng,s,210)
+
+    elif name == "Ebi":
+        # Shrimp: pale ivory flesh with bright coral orange curved bands.
+        scatter(d,rng,s,["#fff8ed","#f3ddd0"],190,.025,.08)
+        for j in range(27):
+            yy=(j+.35)*s/27
+            d.arc((-s*.15,yy-s*.22,s*1.15,yy+s*.22),10,170,fill="#ec8467d9",width=max(5,s//36))
+        fibers(d,rng,s,["#ffffffa6","#f4a48e7c"],115,3,.14,.06)
+
+    elif name == "Kani":
+        # White crab with recognizable salmon-coral surimi stripes.
+        scatter(d,rng,s,["#ffffff","#fff5ea","#ecdfd2"],180,.01,.05)
+        for j in range(0,s,59):
+            d.line((-15,j+24,s+15,j-20),fill="#ed8067e0",width=17)
+            d.line((-15,j+41,s+15,j-3),fill="#ffc5a6be",width=6)
+
+    elif name == "Miso Marinated Tofu":
+        scatter(d,rng,s,["#f2e3c5","#b89b6e","#f8edd6"],155,.017,.05)
+        # Clearly visible dark grill marks, diagonal across tofu.
+        for x in range(-s,s*2,95):
+            d.line((x,-20,x-s*.53,s+20),fill="#6d4326d4",width=16)
+            d.line((x+17,-20,x+17-s*.53,s+20),fill="#b27c4188",width=7)
+
+    elif name == "Cooked Bulgogi Brisket":
+        fibers(d,rng,s,["#3e2117d0","#ad7551bb","#e0a16970"],205,8,.29,.12)
+        scatter(d,rng,s,["#4a2719aa","#96582f99"],165,.01,.05)
+
+    elif name == "Cooked Gochujang Pork Belly":
+        scatter(d,rng,s,["#7a1b13a6","#e3522d8e","#c43c228e"],245,.013,.074)
+        fibers(d,rng,s,["#f0a07a99","#75190da6"],145,5,.32,.08)
+        scorch(d,rng,s,100)
+
+    elif name == "Grilled Chicken Breast":
+        fibers(d,rng,s,["#f3e3beaa","#a7895b78","#fdf5dcaa"],190,4,.28,.055)
+        for j in range(-s,s*2,115):
+            d.line((j,0,j-s*.38,s),fill="#81573397",width=10)
+
+    elif name == "Tempura Shrimp":
+        scatter(d,rng,s,["#f9e3a3","#c78a44","#f5c76e","#ffeac5"],410,.009,.067)
+        scatter(d,rng,s,["#f1a188","#fff3df"],90,.02,.08)
+
     elif name == "Ikura":
-        spots(d, rng, size, ["#f48a26", "#c95924", "#ee6f1d"], 410, .025, .055)
-        spots(d, rng, size, ["#ffd37f", "#ffbb5f"], 210, .005, .012)
-    elif name in {"Tempura Shrimp", "Tempura Bits"}:
-        spots(d, rng, size, ["#f4d79d", "#bd8239", "#f9eac9", "#dba95f"], 450, .006, .052)
-        if name == "Tempura Shrimp":
-            spots(d, rng, size, ["#eea292", "#fff3db"], 110, .02, .07)
-    elif name in {"Mayo", "Spicy Mayo", "Cream Cheese"}:
-        palette = ["#f8cfb3", "#da8468", "#f6e4ca"] if name == "Spicy Mayo" else ["#fffbed", "#ece3ca", "#faf3e5"]
-        spots(d, rng, size, palette, 220, .007, .055)
-    elif name in {"Mango Spears", "Tamago", "Yellow Daikon", "Julienned Carrot Spears", "Ube Purple Yam", "Miso Marinated Tofu"}:
-        palette = (["#8d5ba7", "#c4a1d0", "#74428c"] if name == "Ube Purple Yam"
-            else ["#e97c35", "#ffb563", "#db6427"] if name == "Julienned Carrot Spears"
-            else ["#e5a12c", "#ffd477", "#f3b23b"] if name == "Mango Spears"
-            else ["#edd38a", "#fff2ae", "#c9a956"])
-        spots(d, rng, size, palette, 250, .015, .08)
-    elif name == "Kimchi":
-        spots(d, rng, size, ["#a73a2b", "#dc793c", "#efb16b", "#7b9c59"], 310, .009, .073)
-    elif name in {"Ebi", "Kani"}:
-        spots(d, rng, size, ["#f7ede0", "#e88b81", "#fff8ed", "#d96c65"], 215, .01, .08)
-    elif name in {"Tuna Salad", "Spicy Scallop Salad"}:
-        spots(d, rng, size, ["#fff0d7", "#bd8f7e", "#eac4a9", "#e4a17e"], 325, .013, .058)
+        scatter(d,rng,s,["#bb3c12","#ef7719","#fa952b"],400,.025,.065)
+        scatter(d,rng,s,["#ffdc7b","#ffbd55"],230,.003,.013)
+
     elif name == "Uni":
-        spots(d, rng, size, ["#ffdc83", "#e9a13d", "#c88126", "#f6c05a"], 340, .01, .06)
-    else:
-        # Sashimi fibers, marbling, or cooked/seared surface variations.
-        palette = ["#fff5e7", "#eecfb8", "#c78577", COLORS[name]]
-        spots(d, rng, size, palette, 260, .007, .044)
-        for _ in range(150):
-            x, y = rng.randrange(size), rng.randrange(size)
-            dx = rng.randrange(12,90)
-            d.arc((x-dx,y-8,x+dx,y+8), 180, 350, fill=(255,246,234,rng.randint(45,140)), width=rng.choice([1,2,3]))
-        if "Aburi" in name or "Cooked" in name or "Grilled" in name:
-            spots(d, rng, size, ["#8c5338", "#b6784c", "#e2b889"], 220, .003, .026)
-    return image
+        scatter(d,rng,s,["#edac40","#ffd878","#c98628","#f6be59"],330,.013,.068)
+
+    elif name in {"Tuna Salad","Spicy Scallop Salad"}:
+        p=["#c18b89","#e8bdb6","#f4e7d5"] if name=="Tuna Salad" else ["#df9a7b","#efc3aa","#f7e4c8"]
+        scatter(d,rng,s,p,340,.012,.074)
+        scatter(d,rng,s,["#fff7dd","#fbedd9"],170,.009,.035)
+
+    elif name == "Diced Green Onions":
+        scatter(d,rng,s,["#549849","#acd279","#e5edb6"],160,.014,.06)
+        for _ in range(190):
+            x,y=rng.randrange(s),rng.randrange(s)
+            r=rng.uniform(.032,.066)*s  # Large scallion rings.
+            oval(d,x,y,r,r,"#286d38")
+            oval(d,x,y,r*.73,r*.73,"#d6e8a4")
+            oval(d,x,y,r*.40,r*.40,"#7fb85b")
+
+    elif name in {"Avocado","Edamame"}:
+        scatter(d,rng,s,["#7fae49","#cce68d","#a3ce71","#edf4b9"],340,.015,.068)
+
+    elif name in {"Julienne Cucumber","Asparagus","Pickled Jalapeño Spears"}:
+        scatter(d,rng,s,["#387e42","#8dbe5c","#dce7a1","#b1d785"],270,.01,.075)
+        scatter(d,rng,s,["#e9efcc","#ffffffab"],150,.004,.02)
+
+    elif name in {"Spinach",SHISO}:
+        scatter(d,rng,s,["#1d5938","#43874b","#82af60"],340,.012,.088)
+        fibers(d,rng,s,["#b1d48ca8","#2b634d99"],165,2,.14,.17)
+
+    elif name == "Kimchi":
+        scatter(d,rng,s,["#92291e","#ec7b38","#f2bf72","#789445"],370,.012,.073)
+
+    elif name in {"Mayo","Spicy Mayo","Cream Cheese"}:
+        p=["#f2c0a1","#d77b5b","#ffe2c5"] if name=="Spicy Mayo" else ["#ffffff","#eae0c9","#fff5e3"]
+        scatter(d,rng,s,p,230,.015,.07)
+
+    elif name in {"Ube Purple Yam","Mango Spears","Julienned Carrot Spears","Yellow Daikon","Tamago"}:
+        p=(["#7d5196","#be94cb","#e6cdee"] if name=="Ube Purple Yam"
+           else ["#ea9c2d","#ffc963","#f9b046"] if name=="Mango Spears"
+           else ["#d96928","#f39a3e","#ffc16d"] if name=="Julienned Carrot Spears"
+           else ["#d7c04b","#fff3b0","#f0d76d"])
+        scatter(d,rng,s,p,275,.015,.08)
+
+    elif name == "Tempura Bits":
+        scatter(d,rng,s,["#a97535","#e7ba73","#fff0c1","#c58d46"],450,.006,.056)
+
+    elif name == SESAME:
+        for _ in range(1500):
+            x,y=rng.randrange(s),rng.randrange(s)
+            oval(d,x,y,3,2,rng.choice(["#262924","#fff9e5","#d4c9b6"]))
+
+    return im
 
 
 @lru_cache(maxsize=128)
 def thumbnail(name):
-    tex = ingredient_texture(name, 120)
-    icon = Image.new("RGBA", (64,64), (255,255,255,0))
-    mask = Image.new("L", (64,64), 0)
-    m = ImageDraw.Draw(mask)
-    m.ellipse((2,2,62,62), fill=255)
-    if name == SESAME:
-        tex = Image.new("RGB", (64,64), "#f7f1de")
-        td = ImageDraw.Draw(tex)
-        rng = rng_for("seed-icon")
-        for _ in range(115):
-            x,y = rng.randrange(64),rng.randrange(64)
-            ellipse(td,x,y,1.6,.9,rng.choice(["#1a211c", "#fffdfa", "#dfd2a8"]))
-    else:
-        tex = tex.resize((64,64),Image.Resampling.LANCZOS)
-    icon.paste(tex,(0,0),mask)
-    ImageDraw.Draw(icon).ellipse((2,2,62,62),outline="#667464",width=2)
-    return icon
+    s=84
+    mask=Image.new("L",(s,s),0)
+    ImageDraw.Draw(mask).ellipse((2,2,s-3,s-3),fill=255)
+    result=Image.new("RGBA",(s,s),(0,0,0,0))
+    tile=texture(name,512).resize((s,s),Image.Resampling.LANCZOS)
+    result.paste(tile,(0,0),mask)
+    ImageDraw.Draw(result).ellipse((2,2,s-3,s-3),outline=RED,width=2)
+    return result
 
 
-def draw_circle(draw, x, y, r, fill, width=0):
-    ellipse(draw,x,y,r,r,fill,width)
-
-
-def rice(image, cx, cy, radius, seed):
-    rng=rng_for("rice",seed)
+def draw_rice(image,cx,cy,r,seed):
+    rng=rand_for("rice",seed)
     d=ImageDraw.Draw(image,"RGBA")
-    draw_circle(d,cx,cy,radius,"#f4f2e9")
-    for _ in range(1250):
+    oval(d,cx,cy,r,r,"#f3f1e8")
+    for _ in range(3400):
         a=rng.random()*math.tau
-        rr=radius*math.sqrt(rng.random())
+        rr=r*math.sqrt(rng.random())
         x,y=cx+rr*math.cos(a),cy+rr*math.sin(a)
-        ellipse(d,x,y,rng.uniform(1.3,4),rng.uniform(.7,2.2),rng.choice([
-            "#ffffffb8", "#e1dfd5a8", "#f5f5eda6", "#cbcbbf66"
+        oval(d,x,y,rng.uniform(2,7),rng.uniform(1,3.5),rng.choice([
+            "#fffefaad","#dedbd0b0","#ffffffc9","#d5d0c28a"
         ]))
 
 
-def seed_coating(image,cx,cy,outer_r,inner_r,piece):
-    d=ImageDraw.Draw(image)
-    rng=rng_for("sesame",piece)
-    for _ in range(360):
-        a=rng.random()*math.tau
-        r=math.sqrt(rng.uniform(inner_r**2,outer_r**2))
-        x,y=cx+math.cos(a)*r,cy+math.sin(a)*r
-        ellipse(d,x,y,rng.uniform(1,2.2),rng.uniform(.7,1.15),rng.choice(["#252621", "#fcf9e9", "#d6cdb7"]))
-
-
-def draw_shiso_ring(image,cx,cy,outer_r):
+def leaf_ring(image,cx,cy,r):
     d=ImageDraw.Draw(image,"RGBA")
-    draw_circle(d,cx,cy,outer_r,"#2e7040",11)
-    draw_circle(d,cx,cy,outer_r-5,"#8ab063",2)
-    for index in range(90):
-        a=index*math.tau/90
-        x1,y1=cx+outer_r*math.cos(a),cy+outer_r*math.sin(a)
-        x2,y2=cx+(outer_r-10)*math.cos(a+.07),cy+(outer_r-10)*math.sin(a+.07)
-        d.line((x1,y1,x2,y2),fill="#b8d58b",width=1)
+    oval(d,cx,cy,r,r,None,"#326a3a",width=24)
+    oval(d,cx,cy,r-7,r-7,None,"#83b364",width=7)
+    for j in range(120):
+        a=j*math.tau/120
+        d.line((cx+r*math.cos(a),cy+r*math.sin(a),
+                cx+(r-23)*math.cos(a+.085),cy+(r-23)*math.sin(a+.085)),
+               fill="#badb8ca6",width=2)
 
 
-def draw_filled_interior(image,cx,cy,radius,names,piece):
-    """Every selected item occupies a full sector of the interior disk."""
+def fill_core(image,cx,cy,r,names):
     if not names:
-        ImageDraw.Draw(image).ellipse((cx-radius,cy-radius,cx+radius,cy+radius),fill="#ede9d7")
+        oval(ImageDraw.Draw(image),cx,cy,r,r,"#e9e4d4")
         return
     n=len(names)
-    turn=(piece%4)*1.5
+    # Entire interior is divided into equal angular sections, no empty gaps.
     for i,name in enumerate(names):
-        start=-90+360*i/n+turn
-        end=-90+360*(i+1)/n+turn
+        a=-90+360*i/n
+        b=-90+360*(i+1)/n
         mask=Image.new("L",image.size,0)
         md=ImageDraw.Draw(mask)
-        box=(cx-radius,cy-radius,cx+radius,cy+radius)
-        # Pillow pie coordinates rotate clockwise from 3 o'clock.
-        md.pieslice(box,start,end,fill=255)
-        # Render the texture with a different offset per piece and ingredient.
-        tile=ingredient_texture(name,340)
-        offset_rng=rng_for(name,piece)
-        dx=offset_rng.randrange(10,80)
-        dy=offset_rng.randrange(10,80)
-        patch=tile.crop((dx,dy,dx+224,dy+224)).resize((radius*2+2,radius*2+2),Image.Resampling.BICUBIC)
-        layer=Image.new("RGB",image.size)
-        layer.paste(patch,(cx-radius-1,cy-radius-1))
-        image.paste(layer,(0,0),mask)
-    d=ImageDraw.Draw(image,"RGBA")
+        bounds=(cx-r,cy-r,cx+r,cy+r)
+        if n==1:
+            md.ellipse(bounds,fill=255)
+        else:
+            md.pieslice(bounds,a,b,fill=255)
+        # Use a large seamless repeated texture for each sector.
+        tex=texture(name,512)
+        tile=tex.resize((r*2+2,r*2+2),Image.Resampling.BICUBIC)
+        patch=Image.new("RGB",image.size)
+        patch.paste(tile,(cx-r-1,cy-r-1))
+        image.paste(patch,(0,0),mask)
     if n>1:
+        d=ImageDraw.Draw(image,"RGBA")
         for i in range(n):
-            a=math.radians(-90+360*i/n+turn)
-            d.line((cx,cy,cx+radius*math.cos(a),cy+radius*math.sin(a)),fill="#473c3333",width=2)
+            a=math.radians(-90+360*i/n)
+            d.line((cx,cy,cx+r*math.cos(a),cy+r*math.sin(a)),fill="#564c3544",width=2)
 
 
-def draw_roll(image,cx,cy,radius,piece,style,names,shiso_on,sesame_on):
+def sesame_coating(image,cx,cy,r,inner):
+    d=ImageDraw.Draw(image)
+    rng=rand_for("outer-sesame")
+    for _ in range(1650):
+        angle=rng.random()*math.tau
+        radius=math.sqrt(rng.uniform(inner**2,r**2))
+        x=cx+radius*math.cos(angle)
+        y=cy+radius*math.sin(angle)
+        oval(d,x,y,rng.uniform(1.5,4),rng.uniform(1,2.5),
+             rng.choice(["#1d211d","#fdfaf0","#d2c7ae"]))
+
+
+def render_roll():
+    image=Image.new("RGB",(SIZE,SIZE),BG)
+    cx=cy=CENTER
+    R=ROLL_RADIUS
+    items=st.session_state.ingredients
+    names=([n for n in PROTEINS if n in items]
+           +[n for n in FILLINGS if n in items and n not in (SHISO,SESAME)])
     d=ImageDraw.Draw(image,"RGBA")
-    # Small drop shadow.
-    ellipse(d,cx+3,cy+7,radius+4,radius+4,"#4a4e4540")
-    if style=="Futomaki":
-        draw_circle(d,cx,cy,radius,"#19271f")
-        draw_circle(d,cx,cy,radius-4,"#405744",2)
-        rice(image,cx,cy,radius-9,piece)
-        # Rice band is 25% of total radius: core radius ~0.75 R.
-        core_r=round(radius*.75)
-        if shiso_on:
-            draw_shiso_ring(image,cx,cy,core_r)
-            core_r-=10
-        draw_filled_interior(image,cx,cy,core_r,names,piece)
+    oval(d,cx+5,cy+10,R+4,R+4,"#59605745")
+    if st.session_state.roll_style=="Futomaki":
+        oval(d,cx,cy,R,R,"#1b2920")
+        oval(d,cx,cy,R-6,R-6,None,"#617557",width=4)
+        draw_rice(image,cx,cy,R-15,"futomaki")
+        core_r=round(R*.75)  # Rice is approx. 25% of the radius.
     else:
-        rice(image,cx,cy,radius,piece)
-        if sesame_on:
-            seed_coating(image,cx,cy,radius-2,radius*.79,piece)
-        # Nori separates inner ingredients and external rice.
-        nori_r=round(radius*.75)
-        draw_circle(d,cx,cy,nori_r+4,"#1d2b21")
-        draw_circle(d,cx,cy,nori_r+3,"#547052",2)
-        core_r=nori_r-5
-        if shiso_on:
-            draw_shiso_ring(image,cx,cy,core_r)
-            core_r-=10
-        draw_filled_interior(image,cx,cy,core_r,names,piece)
-
-
-def render():
-    image=Image.new("RGB",(1200,660),BACKGROUND)
-    selection=st.session_state.ingredients
-    interior=( [name for name in PROTEINS if name in selection]
-             + [name for name in FILLINGS if name in selection and name not in (SESAME,SHISO)] )
-    for row in range(2):
-        for col in range(4):
-            draw_roll(image,160+col*292,171+row*316,112,
-                      row*4+col,st.session_state.roll_style,interior,
-                      SHISO in selection,SESAME in selection)
+        draw_rice(image,cx,cy,R,"uramaki")
+        if SESAME in items:
+            sesame_coating(image,cx,cy,R-6,round(R*.81))
+        core_r=round(R*.75)
+        d=ImageDraw.Draw(image,"RGBA")
+        oval(d,cx,cy,core_r+10,core_r+10,"#1b2920")
+        oval(d,cx,cy,core_r+7,core_r+7,None,"#607a58",width=4)
+        core_r-=3
+    if SHISO in items:
+        leaf_ring(image,cx,cy,core_r)
+        core_r-=24
+    fill_core(image,cx,cy,core_r,names)
     return image
 
 
-def toggle_ingredient(name):
-    items=st.session_state.ingredients
-    if name in items:
-        items.remove(name)
+def toggle(name):
+    chosen=st.session_state.ingredients
+    if name in chosen:
+        chosen.remove(name)
     else:
-        items.add(name)
+        chosen.add(name)
         if name==SESAME:
             st.session_state.roll_style="Uramaki"
 
 
-def choose_style(style):
-    st.session_state.roll_style=style
-    if style=="Futomaki":
+def change_style(kind):
+    st.session_state.roll_style=kind
+    if kind=="Futomaki":
         st.session_state.ingredients.discard(SESAME)
+
+
+def reset_roll():
+    st.session_state.ingredients=set()
+    st.session_state.roll_style="Futomaki"
 
 
 st.markdown("""
 <style>
-.stApp { background:#C6C6C6; color:#27362c; }
-h1,h2,h3 { color:#244b37; }
-div.stButton > button { width:100%; text-align:left; min-height:38px;
-    background:#f7f8f5; color:#263f2e; border:1px solid #b9c3b9;
-    border-radius:8px; white-space:normal; font-size:.82rem; }
-div.stButton > button:hover { border-color:#52795b; color:#1e5034; }
-[data-testid="stImage"] img { border-radius:8px; }
+.stApp {background:#C6C6C6; color:#29352e;}
+h1,h2,h3 {color:#29352e;}
+/* White controls with red strokes, including the two roll-style bars. */
+div.stButton > button, div.stDownloadButton > button {
+  background:#ffffff !important;
+  border:2px solid #ed2227 !important;
+  color:#ed2227 !important;
+  border-radius:8px !important;
+  height:auto !important;
+  min-height:43px !important;
+  width:100% !important;
+  white-space:normal !important;
+  word-break:normal !important;
+  overflow-wrap:anywhere !important;
+  text-align:left !important;
+  line-height:1.35 !important;
+  padding:9px 10px !important;
+  font-weight:650 !important;
+  font-size:13px !important;
+}
+div.stButton > button:hover, div.stDownloadButton > button:hover {
+  background:#fff1f1 !important;
+}
+div.stButton > button p, div.stDownloadButton > button p,
+div.stButton > button span, div.stDownloadButton > button span {
+  white-space:normal !important;
+  overflow:visible !important;
+  text-overflow:clip !important;
+  word-break:normal !important;
+}
+/* The download button typography remains #ed2227. */
+[data-testid="stDownloadButton"] button {color:#ed2227 !important;}
+.selected-style {color:#ed2227;font-weight:750;font-size:16px;padding:12px 0;}
+.selected-style strong {color:#ed2227;}
+[data-testid="stImage"] img {border-radius:10px;}
 </style>
 """,unsafe_allow_html=True)
 
 st.title("Futomaki Studio")
-st.caption("Interactive sushi roll development · 8 pieces · top view · #C6C6C6")
+st.caption("Single-roll development preview · top-down cross section · #C6C6C6")
 
-left,right=st.columns([1.1,1.65],gap="large")
+left,right=st.columns([1.25,1.65],gap="large")
 with left:
-    protein_col,filling_col=st.columns(2,gap="small")
-    for col,label,items in [(protein_col,"PROTEINS",PROTEINS),(filling_col,"FILLINGS",FILLINGS)]:
+    protein_col,filling_col=st.columns(2,gap="medium")
+    for col,label,items in [
+        (protein_col,"PROTEINS",PROTEINS),
+        (filling_col,"FILLINGS",FILLINGS)
+    ]:
         with col:
             st.subheader(label)
             for name in items:
+                # Visual preview next to the full, wrapping ingredient name.
                 icon_col,button_col=st.columns([1,4],gap="small",vertical_alignment="center")
                 with icon_col:
-                    st.image(thumbnail(name),width=38)
+                    st.image(thumbnail(name),use_container_width=True)
                 with button_col:
-                    mark="✓ " if name in st.session_state.ingredients else "+ "
-                    st.button(mark+name,key="item_"+name,on_click=toggle_ingredient,args=(name,))
+                    chosen=name in st.session_state.ingredients
+                    label_text=("✓ " if chosen else "+ ")+name
+                    st.button(label_text,key="ingredient_"+name,
+                              on_click=toggle,args=(name,))
 
 with right:
     st.subheader("Build your roll")
-    a,b,c=st.columns([1,1,1])
-    with a:
-        st.button("Futomaki",on_click=choose_style,args=("Futomaki",))
-    with b:
-        st.button("Uramaki",on_click=choose_style,args=("Uramaki",))
-    with c:
-        if st.button("Clear roll"):
-            st.session_state.ingredients.clear()
-            st.session_state.roll_style="Futomaki"
-            st.rerun()
+    c1,c2,c3=st.columns([1,1,.8])
+    with c1:
+        st.button("Futomaki",on_click=change_style,args=("Futomaki",))
+    with c2:
+        st.button("Uramaki",on_click=change_style,args=("Uramaki",))
+    with c3:
+        st.button("Clear roll",on_click=reset_roll)
 
-    st.info("Selected style: **"+st.session_state.roll_style+"** · "+(
-        "Nori outside / rice inside" if st.session_state.roll_style=="Futomaki"
-        else "Rice outside / nori around fillings"))
+    current=st.session_state.roll_style
+    description=("Nori outside · rice inside" if current=="Futomaki"
+                 else "Rice outside · nori inside")
+    st.markdown(
+        '<div class="selected-style">Selected style: '
+        +current+' — '+description+'</div>',
+        unsafe_allow_html=True
+    )
+    roll_image=render_roll()
+    st.image(roll_image,use_container_width=True)
+    out=io.BytesIO()
+    roll_image.save(out,format="PNG")
+    st.download_button("Download roll mockup (PNG)",data=out.getvalue(),
+                       file_name="futomaki-studio-one-roll.png",mime="image/png")
 
-    preview=render()
-    st.image(preview,caption="Eight cross-sectional sushi pieces in two rows of four",use_container_width=True)
-    buf=io.BytesIO()
-    preview.save(buf,format="PNG")
-    st.download_button("Download roll mockup (PNG)",data=buf.getvalue(),
-                       file_name="futomaki-studio-roll.png",mime="image/png")
-
-    chosen_proteins=[x for x in PROTEINS if x in st.session_state.ingredients]
-    chosen_fillings=[x for x in FILLINGS if x in st.session_state.ingredients]
+    pp=[n for n in PROTEINS if n in st.session_state.ingredients]
+    ff=[n for n in FILLINGS if n in st.session_state.ingredients]
     st.markdown("**Selected ingredients**")
-    st.write("**Proteins:** "+(", ".join(chosen_proteins) if chosen_proteins else "None"))
-    st.write("**Fillings:** "+(", ".join(chosen_fillings) if chosen_fillings else "None"))
-    st.caption("Images are procedurally illustrated, not photographs. Ingredients fill the central disk; shiso stays in a continuous ring. Sesame appears on the outside of Uramaki.")
+    st.write("**Proteins:** "+(", ".join(pp) if pp else "None"))
+    st.write("**Fillings:** "+(", ".join(ff) if ff else "None"))
+    st.caption("Illustrated food textures, not actual photographs. Ingredient regions expand "
+               "to occupy the full interior. Shiso wraps the filling area; sesame stays "
+               "on the exterior rice and automatically selects Uramaki.")
