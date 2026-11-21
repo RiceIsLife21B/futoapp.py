@@ -380,7 +380,7 @@ h1,h2,h3 {color:#29352e;}
 /* White controls with red strokes, including the two roll-style bars. */
 div.stButton > button, div.stDownloadButton > button {
   background:#ffffff !important;
-  border:2px solid #ed2227 !important;
+  border:4px solid #000000 !important;
   color:000000 !important;
   border-radius:8px !important;
   height:auto !important;
